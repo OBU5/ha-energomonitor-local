@@ -37,15 +37,24 @@ MSG
     exit 1
 fi
 
+# The placeholders are read out of the templates themselves: every serial-shaped
+# token in ha-config/ must be gone from the rendered output.  Deriving the list
+# here rather than from substitutions.sed is deliberate - a mapping file that is
+# simply missing a rule would otherwise define the placeholder out of existence
+# and be checked for nothing, deploying an entity that still filters on a
+# placeholder serial: matching no message, and raising no error to say so.
+SERIAL_RE='[0-9A-Fa-f]{16}|(01|02|08)[0-9A-Fa-f]{6}'
+
 mkdir -p build
 for f in ha-config/mqtt.yaml ha-config/automations-energomonitor.yaml; do
     out="build/$(basename "$f")"
     sed -f "$SUBS" "$f" > "$out"
-    left=$(grep -c "0123456789ABCDEF" "$out" || true)
-    if [ "$left" != "0" ]; then
-        echo "error: $out still contains the placeholder serial - check $SUBS" >&2
-        exit 1
-    fi
+    for p in $(grep -ohE "$SERIAL_RE" "$f" | sort -u); do
+        if grep -q "$p" "$out"; then
+            echo "error: $out still contains the placeholder '$p' - add a rule for it to $SUBS" >&2
+            exit 1
+        fi
+    done
     printf "rendered %-46s %s lines\n" "$out" "$(wc -l < "$out")"
 done
 

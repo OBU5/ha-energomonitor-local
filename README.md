@@ -57,7 +57,7 @@ Three pieces, all necessary:
 | `addon/energo-boot/Dockerfile` | 11 | container build |
 | `addon/energo-boot/build.yaml` | 2 | base image pin |
 | `ha-config/automations-energomonitor.yaml` | 65 | `/config/automations.yaml` |
-| `ha-config/mqtt.yaml` | 489 | `/config/mqtt.yaml` |
+| `ha-config/mqtt.yaml` | 495 | `/config/mqtt.yaml` |
 
 Everything except `server.py` is declarative - Supervisor metadata or data that Home
 Assistant interprets. There is one program in this project.

@@ -284,6 +284,15 @@ Still unidentified — link quality or battery.
 
 ### The mistake this avoided repeating
 
+An earlier pass concluded `m=15` was watt-hours, from a meter whose `m=25` was 100. The
+arithmetic fitted by coincidence. The second meter's constant of 10000 exposed it: **the
+unit only exists after dividing by the meter constant.**
+
+```
+electricity kWh = m15 / m25      (10000 imp/kWh)
+gas         m³  = m15 / m25      (100 imp/m³ — the reed contact on the 0.01 m³ digit)
+```
+
 ### Then check the vendor documentation
 
 Everything above was inferred from traffic, and it was worth doing — but the codes are in
@@ -317,15 +326,6 @@ would have caught both:
   estimate derived from the interval since the last pulse, and at ~5 L/h it takes two
   hours to accumulate the 0.01 m³ that makes one pulse. A small flow reading and a frozen
   counter are perfectly consistent.
-
-An earlier pass concluded `m=15` was watt-hours, from a meter whose `m=25` was 100. The
-arithmetic fitted by coincidence. The second meter's constant of 10000 exposed it: **the
-unit only exists after dividing by the meter constant.**
-
-```
-electricity kWh = m15 / m25      (10000 imp/kWh)
-gas         m³  = m15 / m25      (100 imp/m³ — the reed contact on the 0.01 m³ digit)
-```
 
 ### Key entities in `ha-config/mqtt.yaml`
 
