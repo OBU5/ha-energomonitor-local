@@ -25,30 +25,35 @@
 # stable. Keying on channel would silently attach readings to the wrong entity.
 # ============================================================================
 #
-# MEDIUM CODES - confirmed
+# MEDIUM CODES - all confirmed against the vendor table at
+# https://developers.energomonitor.com/formats-protocols/medium-ids/
 #
-#   m=15  cumulative PULSE COUNT (not an energy value on its own)
-#   m=25  meter constant, pulses per unit
-#   m=12  instantaneous power, W
-#   m=16  temperature, degC
+#   m=10  LQI, link quality indicator (no unit)
 #   m=11  RSSI, dBm
+#   m=12  electric power, W
+#   m=13  gas flow rate, L/h
+#   m=15  pulse count (not an energy value on its own)
+#   m=25  IPU, impulses per unit - #/kWh for electricity, #/m3 for gas
+#   m=16  temperature, degC
 #
-#   Energy in kWh = m15 / m25.  Verified by cross-check: over 100 s the counter
-#   advanced 336 pulses at 10000 imp/kWh = 0.0336 kWh = 1210 W average, against
-#   a measured m12 average of 1141 W (94.3% agreement).  Per-interval matches
-#   are within 1% - e.g. +19 pulses in 10 s implies 684 W and m12 read 685 W.
+#   Energy kWh = m15 / m25   (IPU 10000)
+#   Gas    m3  = m15 / m25   (IPU 100)
 #
-# MEDIUM CODES - still unidentified, deployed as raw diagnostics with no
-# device_class so nothing is mislabelled
+#   The electricity conversion was also verified independently before the vendor
+#   table was found: over 100 s the counter advanced 336 pulses at 10000 imp/kWh
+#   = 0.0336 kWh = 1210 W average, against a measured m12 average of 1141 W.
+#   Per-interval agreement is inside 1% - +19 pulses in 10 s implies 684 W and
+#   m12 read 685 W.
 #
-#   m=10  46..51 on ALL sensors, including both pulse meters.  NOT humidity:
-#         three sensors in different rooms agree within 2% while their
-#         temperatures differ, and a meter would not report humidity.  Not a
-#         clean function of RSSI either - pinned near 50 from -46 to -62 dBm,
-#         dropping to 46 only on the worst link (-77).  Link quality or
-#         battery %.  Breathe on a type-8 sensor to rule humidity in or out.
-#   m=13  on the gas sensor only.  Observed at 6 and 8 while no gas is flowing,
-#         so it is NOT a flow rate - a flow rate would read 0.  Drifts slowly.
+#   m=13 reads a small non-zero value (8 -> 6 -> 1) while the gas counter is
+#   frozen.  Both are correct: it is a flow estimate derived from the interval
+#   since the last pulse, decaying as no pulse arrives.  At ~5 L/h it takes two
+#   hours to accumulate the 0.01 m3 that makes one pulse.
+#
+# NO BATTERY TELEMETRY EXISTS.  The vendor sensor table lists Optosense as
+# 15/25/12/11, Relaysense Gas as 15/25/13/11 and Thermosense as 16/11.  None
+# reports a battery medium; m=10 (LQI) is the only undocumented extra these
+# devices send.  Medium 37 is relative humidity and Thermosense never sends it.
 #
 # SENSORS as of 2026-08-28
 #
@@ -88,7 +93,7 @@ sensor:
       identifiers: ["em_sensor_01000001"]
       name: "EnergoMonitor electricity"
       manufacturer: Energomonitor
-      model: "Pulse sensor (type 1, 10000 imp/kWh)"
+      model: "EOS-OS Optosense (device id 1, 10000 imp/kWh)"
       via_device: "em_0123456789ABCDEF"
 
   - name: "Power"
@@ -127,7 +132,7 @@ sensor:
     payload_not_available: "disconnected"
     device: *elec
 
-  - name: "Raw m10"
+  - name: "Link quality"
     unique_id: em_0123456789ABCDEF_01000001_m10
     state_topic: "sn/0123456789ABCDEF/data"
     state_class: measurement
@@ -196,7 +201,7 @@ sensor:
       identifiers: ["em_sensor_02000002"]
       name: "EnergoMonitor gas"
       manufacturer: Energomonitor
-      model: "Pulse sensor (type 2, 100 imp/m³)"
+      model: "EOS-GM Relaysense Gas (device id 2, 100 imp/m³)"
       via_device: "em_0123456789ABCDEF"
 
   - name: "Pulses"
@@ -216,11 +221,12 @@ sensor:
     payload_not_available: "disconnected"
     device: *meter2
 
-  - name: "Raw m13"
+  - name: "Flow rate"
     unique_id: em_0123456789ABCDEF_02000002_m13
     state_topic: "sn/0123456789ABCDEF/data"
     state_class: measurement
-    entity_category: diagnostic
+    unit_of_measurement: "L/h"
+    suggested_display_precision: 0
     value_template: >-
       {%- if value_json.u == '02000002' -%}
       {%- set r = value_json.s | selectattr('m', 'eq', 13) | list -%}
@@ -233,7 +239,7 @@ sensor:
     payload_not_available: "disconnected"
     device: *meter2
 
-  - name: "Raw m10"
+  - name: "Link quality"
     unique_id: em_0123456789ABCDEF_02000002_m10
     state_topic: "sn/0123456789ABCDEF/data"
     state_class: measurement
@@ -291,10 +297,10 @@ sensor:
       identifiers: ["em_sensor_08000001"]
       name: "EnergoMonitor 08000001"
       manufacturer: Energomonitor
-      model: "Chirp sensor (type 8)"
+      model: "ETM Thermosense (device id 8)"
       via_device: "em_0123456789ABCDEF"
 
-  - name: "Raw m10"
+  - name: "Link quality"
     unique_id: em_0123456789ABCDEF_08000001_m10
     state_topic: "sn/0123456789ABCDEF/data"
     state_class: measurement
@@ -352,10 +358,10 @@ sensor:
       identifiers: ["em_sensor_08000002"]
       name: "EnergoMonitor 08000002"
       manufacturer: Energomonitor
-      model: "Chirp sensor (type 8)"
+      model: "ETM Thermosense (device id 8)"
       via_device: "em_0123456789ABCDEF"
 
-  - name: "Raw m10"
+  - name: "Link quality"
     unique_id: em_0123456789ABCDEF_08000002_m10
     state_topic: "sn/0123456789ABCDEF/data"
     state_class: measurement
@@ -413,10 +419,10 @@ sensor:
       identifiers: ["em_sensor_08000003"]
       name: "EnergoMonitor 08000003"
       manufacturer: Energomonitor
-      model: "Chirp sensor (type 8)"
+      model: "ETM Thermosense (device id 8)"
       via_device: "em_0123456789ABCDEF"
 
-  - name: "Raw m10"
+  - name: "Link quality"
     unique_id: em_0123456789ABCDEF_08000003_m10
     state_topic: "sn/0123456789ABCDEF/data"
     state_class: measurement

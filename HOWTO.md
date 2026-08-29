@@ -284,6 +284,40 @@ Still unidentified — link quality or battery.
 
 ### The mistake this avoided repeating
 
+### Then check the vendor documentation
+
+Everything above was inferred from traffic, and it was worth doing — but the codes are in
+fact **published**, at
+[developers.energomonitor.com](https://developers.energomonitor.com/formats-protocols/medium-ids/).
+Look there first; reverse-engineer only what is missing.
+
+| ID | Name | Unit |
+| --- | --- | --- |
+| 10 | LQI, link quality | — |
+| 11 | RSSI | dBm |
+| 12 | electric power | W |
+| 13 | gas flow rate | L/h |
+| 14 | water flow rate | L/h |
+| 15 | pulse count | # |
+| 16 | temperature | °C |
+| 25 | IPU, impulses per unit | #/kWh or #/m³ |
+
+And the [device IDs](https://developers.energomonitor.com/formats-protocols/device-ids/):
+`1` = EOS-OS **Optosense** (optical pickup on the meter LED), `2` = EOS-GM **Relaysense
+Gas** (reed contact), `8` = ETM **Thermosense**.
+
+The inference was not wasted — it agreed with the table on every code it reached, and the
+cross-check gives a confidence the table alone cannot: it proves the sensor is actually
+wired to the meter you think it is. But two guesses were wrong, and reading the docs first
+would have caught both:
+
+- `m=10` was called *not humidity, probably link quality or battery*. It is **LQI**.
+- `m=13` was called *not a flow rate, because it reads non-zero with no gas flowing*. It
+  **is** gas flow rate. The reasoning failed because the values decay (8, 6, 1): it is an
+  estimate derived from the interval since the last pulse, and at ~5 L/h it takes two
+  hours to accumulate the 0.01 m³ that makes one pulse. A small flow reading and a frozen
+  counter are perfectly consistent.
+
 An earlier pass concluded `m=15` was watt-hours, from a meter whose `m=25` was 100. The
 arithmetic fitted by coincidence. The second meter's constant of 10000 exposed it: **the
 unit only exists after dividing by the meter constant.**
@@ -346,9 +380,9 @@ Silence means the Homebase never talks to the internet again.
 
 ## Still open
 
-- **`m=10`** — 46–51 everywhere; not humidity, not a clean function of RSSI. Breathe on a
-  temperature sensor with the MQTT listener open to rule humidity in or out.
-- **`m=13`** — on the gas sensor only, reads 6–8 while no gas flows, so not a flow rate.
+- **No battery telemetry exists.** The vendor sensor table lists Optosense as
+  `15/25/12/11`, Relaysense Gas as `15/25/13/11` and Thermosense as `16/11`. None of
+  them reports a battery medium, so HA cannot show battery state for these sensors.
 - **`sn/<SN>/cmd/init`** = `{"version":"1.0","device_id":13,"interface_version":4}` is
   published and **never answered** — it does not appear in the original capture. Harmless
   so far, but `cmd` is the obvious channel for configuring paired meters.
