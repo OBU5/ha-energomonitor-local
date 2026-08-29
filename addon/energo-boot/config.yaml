@@ -1,0 +1,31 @@
+name: EnergoMonitor Boot Responder
+version: "1.0.0"
+slug: energo_boot
+description: >-
+  Answers the EnergoMonitor Homebase provisioning requests locally, pointing the
+  device at a local MQTT broker instead of the vendor cloud.
+url: https://developers.energomonitor.com/partners/provisioning/homebase/
+arch:
+  - aarch64
+init: false
+startup: services
+boot: auto
+watchdog: "tcp://[HOST]:[PORT:80]"
+ports:
+  80/tcp: 80
+ports_description:
+  80/tcp: Provisioning HTTP - must be 80, the Homebase hardcodes it
+options:
+  device_sn: "0123456789ABCDEF"
+  mqtt_host: "192.168.0.25"
+  mqtt_port: 1883
+  broadcast: 0
+  crlf: true
+  trailing_newline: false
+schema:
+  device_sn: str
+  mqtt_host: str
+  mqtt_port: port
+  broadcast: int
+  crlf: bool
+  trailing_newline: bool

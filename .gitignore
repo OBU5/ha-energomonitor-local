@@ -1,0 +1,20 @@
+# Never commit anything carrying the real device identity or credentials.
+# The Homebase MQTT password lives only in the Mosquitto add-on options on the Pi.
+*.local
+*.local.yaml
+secrets.yaml
+.ha_token
+*.pcap
+*.pcapng
+sniff_*.txt
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc

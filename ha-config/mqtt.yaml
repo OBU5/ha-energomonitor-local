@@ -1,0 +1,489 @@
+# MQTT entities for the EnergoMonitor Homebase 0123456789ABCDEF.
+#
+# Wire up with one line in /config/configuration.yaml:
+#     mqtt: !include mqtt.yaml
+#
+# Decoded from live traffic on 2026-08-28, format version 5 (the version
+# negotiated by the `edfmax: 5` we send in collector/conf, echoed as "f":5).
+#
+# PAYLOAD - one message carries ONE sensor's reading:
+#
+#   {"t":1787937872,   unix epoch seconds
+#    "f":5,            format version
+#    "u":"01000001",   sensor serial (8 hex; first byte = hardware type)
+#    "d":1,            hardware type
+#    "ch":0,           channel / sensor slot
+#    "e":10,           sequence counter, wraps 0..15
+#    "v":0,            unknown, always 0 - likely validity/flags
+#    "s":[{"m":15,"v":[20675]},{"m":25,"v":[10000]},{"m":12,"v":[685]},
+#         {"m":10,"v":[50]},{"m":11,"v":[-46]}]}
+#
+# ============================================================================
+# IMPORTANT: every entity filters on `u` (the serial), NEVER on `ch`.
+# Channels are reassigned when the Homebase is reconfigured - on 2026-08-28 the
+# two pulse meters were swapped between channels 0 and 1 - but serials are
+# stable. Keying on channel would silently attach readings to the wrong entity.
+# ============================================================================
+#
+# MEDIUM CODES - confirmed
+#
+#   m=15  cumulative PULSE COUNT (not an energy value on its own)
+#   m=25  meter constant, pulses per unit
+#   m=12  instantaneous power, W
+#   m=16  temperature, degC
+#   m=11  RSSI, dBm
+#
+#   Energy in kWh = m15 / m25.  Verified by cross-check: over 100 s the counter
+#   advanced 336 pulses at 10000 imp/kWh = 0.0336 kWh = 1210 W average, against
+#   a measured m12 average of 1141 W (94.3% agreement).  Per-interval matches
+#   are within 1% - e.g. +19 pulses in 10 s implies 684 W and m12 read 685 W.
+#
+# MEDIUM CODES - still unidentified, deployed as raw diagnostics with no
+# device_class so nothing is mislabelled
+#
+#   m=10  46..51 on ALL sensors, including both pulse meters.  NOT humidity:
+#         three sensors in different rooms agree within 2% while their
+#         temperatures differ, and a meter would not report humidity.  Not a
+#         clean function of RSSI either - pinned near 50 from -46 to -62 dBm,
+#         dropping to 46 only on the worst link (-77).  Link quality or
+#         battery %.  Breathe on a type-8 sensor to rule humidity in or out.
+#   m=13  on the gas sensor only.  Observed at 6 and 8 while no gas is flowing,
+#         so it is NOT a flow rate - a flow rate would read 0.  Drifts slowly.
+#
+# SENSORS as of 2026-08-28
+#
+#   u=01000001  d=1  electricity, 10000 imp/kWh, reports m12 power  ~5s
+#   u=02000002  d=2  gas, 100 imp/m3 (the reed contact on the meter's
+#                    0.01 m3 digit) -> m3 = m15 / m25                  ~5s
+#   u=08000001  d=8  room temperature, weakest link (-72..-77 dBm)     ~32s
+#   u=08000002  d=8  room temperature                                  ~29s
+#   u=08000003  d=8  room temperature, strongest link                  ~31s
+#
+# Rename the temperature entities to their rooms once identified - all three
+# read 24.9-25.1 degC, so the data gives no clue. RSSI is the best hint:
+# 08000003 is closest to the Homebase, 08000001 furthest.
+
+sensor:
+
+  # ================================================= 01000001 - electricity
+  - name: "Energy"
+    unique_id: em_0123456789ABCDEF_01000001_energy
+    state_topic: "sn/0123456789ABCDEF/data"
+    device_class: energy
+    state_class: total_increasing
+    unit_of_measurement: "kWh"
+    suggested_display_precision: 3
+    value_template: >-
+      {%- if value_json.u == '01000001' -%}
+      {%- set p = value_json.s | selectattr('m', 'eq', 15) | list -%}
+      {%- set c = value_json.s | selectattr('m', 'eq', 25) | list -%}
+      {{ (p[0].v[0] / c[0].v[0]) | round(4) if p and c and c[0].v[0] else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: &elec
+      identifiers: ["em_sensor_01000001"]
+      name: "EnergoMonitor electricity"
+      manufacturer: Energomonitor
+      model: "Pulse sensor (type 1, 10000 imp/kWh)"
+      via_device: "em_0123456789ABCDEF"
+
+  - name: "Power"
+    unique_id: em_0123456789ABCDEF_01000001_power
+    state_topic: "sn/0123456789ABCDEF/data"
+    device_class: power
+    state_class: measurement
+    unit_of_measurement: "W"
+    suggested_display_precision: 0
+    value_template: >-
+      {%- if value_json.u == '01000001' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 12) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *elec
+
+  - name: "Meter constant"
+    unique_id: em_0123456789ABCDEF_01000001_constant
+    state_topic: "sn/0123456789ABCDEF/data"
+    unit_of_measurement: "imp/kWh"
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '01000001' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 25) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *elec
+
+  - name: "Raw m10"
+    unique_id: em_0123456789ABCDEF_01000001_m10
+    state_topic: "sn/0123456789ABCDEF/data"
+    state_class: measurement
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '01000001' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 10) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *elec
+
+  - name: "Signal"
+    unique_id: em_0123456789ABCDEF_01000001_rssi
+    state_topic: "sn/0123456789ABCDEF/data"
+    device_class: signal_strength
+    state_class: measurement
+    unit_of_measurement: "dBm"
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '01000001' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 11) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *elec
+
+  # ============================================================ 02000002 - gas
+  # 100 imp/m3 - the standard reed contact on a domestic gas meter's 0.01 m3
+  # digit, which is what gives the unit: m3 = m15 / m25.
+  #
+  # This counts from whenever the sensor was paired, not from the meter's dial.
+  # To make the entity mirror the physical meter face, read the dial and set
+  # `offset` below to (dial reading - current entity value). Note that if the
+  # sensor's own counter is ever reset, the offset becomes wrong - so leave it
+  # at 0 unless you actually need the absolute figure. The Energy dashboard
+  # does not care: it only needs the value to increase.
+  - name: "Volume"
+    unique_id: em_0123456789ABCDEF_02000002_total
+    state_topic: "sn/0123456789ABCDEF/data"
+    device_class: gas
+    state_class: total_increasing
+    unit_of_measurement: "m³"
+    suggested_display_precision: 2
+    value_template: >-
+      {%- if value_json.u == '02000002' -%}
+      {%- set offset = 0 -%}
+      {%- set p = value_json.s | selectattr('m', 'eq', 15) | list -%}
+      {%- set c = value_json.s | selectattr('m', 'eq', 25) | list -%}
+      {{ (offset + p[0].v[0] / c[0].v[0]) | round(4) if p and c and c[0].v[0] else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: &meter2
+      identifiers: ["em_sensor_02000002"]
+      name: "EnergoMonitor gas"
+      manufacturer: Energomonitor
+      model: "Pulse sensor (type 2, 100 imp/m³)"
+      via_device: "em_0123456789ABCDEF"
+
+  - name: "Pulses"
+    unique_id: em_0123456789ABCDEF_02000002_pulses
+    state_topic: "sn/0123456789ABCDEF/data"
+    state_class: total_increasing
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '02000002' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 15) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *meter2
+
+  - name: "Raw m13"
+    unique_id: em_0123456789ABCDEF_02000002_m13
+    state_topic: "sn/0123456789ABCDEF/data"
+    state_class: measurement
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '02000002' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 13) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *meter2
+
+  - name: "Raw m10"
+    unique_id: em_0123456789ABCDEF_02000002_m10
+    state_topic: "sn/0123456789ABCDEF/data"
+    state_class: measurement
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '02000002' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 10) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *meter2
+
+  - name: "Signal"
+    unique_id: em_0123456789ABCDEF_02000002_rssi
+    state_topic: "sn/0123456789ABCDEF/data"
+    device_class: signal_strength
+    state_class: measurement
+    unit_of_measurement: "dBm"
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '02000002' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 11) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *meter2
+
+  # ============================================================= 08000001
+  - name: "Temperature"
+    unique_id: em_0123456789ABCDEF_08000001_temperature
+    state_topic: "sn/0123456789ABCDEF/data"
+    device_class: temperature
+    state_class: measurement
+    unit_of_measurement: "°C"
+    suggested_display_precision: 1
+    value_template: >-
+      {%- if value_json.u == '08000001' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 16) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: &s1
+      identifiers: ["em_sensor_08000001"]
+      name: "EnergoMonitor 08000001"
+      manufacturer: Energomonitor
+      model: "Chirp sensor (type 8)"
+      via_device: "em_0123456789ABCDEF"
+
+  - name: "Raw m10"
+    unique_id: em_0123456789ABCDEF_08000001_m10
+    state_topic: "sn/0123456789ABCDEF/data"
+    state_class: measurement
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '08000001' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 10) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *s1
+
+  - name: "Signal"
+    unique_id: em_0123456789ABCDEF_08000001_rssi
+    state_topic: "sn/0123456789ABCDEF/data"
+    device_class: signal_strength
+    state_class: measurement
+    unit_of_measurement: "dBm"
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '08000001' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 11) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *s1
+
+  # ============================================================= 08000002
+  - name: "Temperature"
+    unique_id: em_0123456789ABCDEF_08000002_temperature
+    state_topic: "sn/0123456789ABCDEF/data"
+    device_class: temperature
+    state_class: measurement
+    unit_of_measurement: "°C"
+    suggested_display_precision: 1
+    value_template: >-
+      {%- if value_json.u == '08000002' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 16) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: &s2
+      identifiers: ["em_sensor_08000002"]
+      name: "EnergoMonitor 08000002"
+      manufacturer: Energomonitor
+      model: "Chirp sensor (type 8)"
+      via_device: "em_0123456789ABCDEF"
+
+  - name: "Raw m10"
+    unique_id: em_0123456789ABCDEF_08000002_m10
+    state_topic: "sn/0123456789ABCDEF/data"
+    state_class: measurement
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '08000002' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 10) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *s2
+
+  - name: "Signal"
+    unique_id: em_0123456789ABCDEF_08000002_rssi
+    state_topic: "sn/0123456789ABCDEF/data"
+    device_class: signal_strength
+    state_class: measurement
+    unit_of_measurement: "dBm"
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '08000002' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 11) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *s2
+
+  # ============================================================= 08000003
+  - name: "Temperature"
+    unique_id: em_0123456789ABCDEF_08000003_temperature
+    state_topic: "sn/0123456789ABCDEF/data"
+    device_class: temperature
+    state_class: measurement
+    unit_of_measurement: "°C"
+    suggested_display_precision: 1
+    value_template: >-
+      {%- if value_json.u == '08000003' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 16) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: &s3
+      identifiers: ["em_sensor_08000003"]
+      name: "EnergoMonitor 08000003"
+      manufacturer: Energomonitor
+      model: "Chirp sensor (type 8)"
+      via_device: "em_0123456789ABCDEF"
+
+  - name: "Raw m10"
+    unique_id: em_0123456789ABCDEF_08000003_m10
+    state_topic: "sn/0123456789ABCDEF/data"
+    state_class: measurement
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '08000003' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 10) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *s3
+
+  - name: "Signal"
+    unique_id: em_0123456789ABCDEF_08000003_rssi
+    state_topic: "sn/0123456789ABCDEF/data"
+    device_class: signal_strength
+    state_class: measurement
+    unit_of_measurement: "dBm"
+    entity_category: diagnostic
+    value_template: >-
+      {%- if value_json.u == '08000003' -%}
+      {%- set r = value_json.s | selectattr('m', 'eq', 11) | list -%}
+      {{ r[0].v[0] if r else this.state }}
+      {%- else -%}
+      {{ this.state }}
+      {%- endif -%}
+    availability_topic: "sn/0123456789ABCDEF/status"
+    payload_available: "connected"
+    payload_not_available: "disconnected"
+    device: *s3
+
+  # ==================================================== Homebase diagnostics
+  # State is the serial of whichever sensor reported last; the full decoded
+  # payload sits in attributes.  This is how you notice a NEW sensor, a channel
+  # reassignment, or an unknown medium code without reading logs.
+  - name: "Last reading"
+    unique_id: em_0123456789ABCDEF_last
+    state_topic: "sn/0123456789ABCDEF/data"
+    value_template: "{{ value_json.u }}"
+    json_attributes_topic: "sn/0123456789ABCDEF/data"
+    json_attributes_template: >-
+      {{ {'serial': value_json.u,
+          'channel': value_json.ch,
+          'hw_type': value_json.d,
+          'format': value_json.f,
+          'sequence': value_json.e,
+          'flags': value_json.v,
+          'reported_at': value_json.t | timestamp_local,
+          'measurements': value_json.s} | tojson }}
+    entity_category: diagnostic
+    device: &homebase
+      identifiers: ["em_0123456789ABCDEF"]
+      name: "EnergoMonitor Homebase"
+      manufacturer: Energomonitor
+      model: EWG6
+      sw_version: "31.0-EWG6"
+
+binary_sensor:
+  - name: "Online"
+    unique_id: em_0123456789ABCDEF_online
+    state_topic: "sn/0123456789ABCDEF/status"
+    payload_on: "connected"
+    payload_off: "disconnected"
+    device_class: connectivity
+    entity_category: diagnostic
+    device: *homebase

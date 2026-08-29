@@ -1,0 +1,65 @@
+# EnergoMonitor Homebase (0123456789ABCDEF) - local MQTT handshake
+#
+# The Homebase asks the server two questions on every MQTT session and will not
+# publish a single measurement until both are answered.  These automations replace
+# the vendor cloud as the thing that answers.  Sequence verified from a tcpdump
+# capture on 2026-08-28; the cloud replied in 316-640 ms.
+#
+# Append the blocks below to /config/automations.yaml.
+
+- id: energomonitor_clock_conf
+  alias: "EnergoMonitor - answer clock/init"
+  description: >-
+    The Homebase has no reliable clock and does no NTP; it asks the server for the
+    time so measurement timestamps are correct.  Payload format matches the cloud
+    byte-for-byte, including the absence of a space after the colon.
+  mode: queued
+  max: 10
+  triggers:
+    - trigger: mqtt
+      topic: sn/0123456789ABCDEF/clock/init
+  actions:
+    - action: mqtt.publish
+      data:
+        topic: sn/0123456789ABCDEF/clock/conf
+        payload: '{"time":{{ now().timestamp() | int }}}'
+        qos: 0
+        retain: false
+
+- id: energomonitor_collector_conf
+  alias: "EnergoMonitor - answer collector/init"
+  description: >-
+    Tells the Homebase which topics to publish measurements to.  `topic` is the one
+    field we genuinely choose - it must match the state_topic of the MQTT sensors.
+    edfmin/edfmax are the EnergoMonitor Data Format versions the server accepts;
+    1-5 is what the cloud negotiated.
+  mode: queued
+  max: 10
+  triggers:
+    - trigger: mqtt
+      topic: sn/0123456789ABCDEF/collector/init
+  actions:
+    - action: mqtt.publish
+      data:
+        topic: sn/0123456789ABCDEF/collector/conf
+        payload: '{"topic":"sn/0123456789ABCDEF/data","topic-bct":"sn/0123456789ABCDEF/data-bct","edfmin":1,"edfmax":5}'
+        qos: 0
+        retain: false
+
+# TEMPORARY - discovery aid.  Writes every message on the device's topic tree into
+# the HA core log, so `ha-tools\ha-connect.ps1 -Logs -Follow` shows the whole
+# handshake live.  Delete this block once the sn/<SN>/data payload is understood.
+- id: energomonitor_log_raw
+  alias: "EnergoMonitor - log raw traffic"
+  description: "Temporary: dump all EnergoMonitor MQTT traffic into the HA log."
+  mode: parallel
+  max: 25
+  triggers:
+    - trigger: mqtt
+      topic: sn/0123456789ABCDEF/#
+  actions:
+    - action: system_log.write
+      data:
+        level: warning
+        logger: energomonitor.raw
+        message: "{{ trigger.topic }} = {{ trigger.payload }}"
