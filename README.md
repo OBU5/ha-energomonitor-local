@@ -203,29 +203,64 @@ message arrives that belongs to a different sensor.
   nowhere else. The original capture file contains it in cleartext - keep that out of the
   workspace too.
 
+## Placeholders and `local/`
+
+The YAML here carries **placeholder serials** so the repo can be public. They are mapped
+back to a real device by `local/substitutions.sed`, which is gitignored:
+
+```bash
+cp substitutions.sed.example local/substitutions.sed
+$EDITOR local/substitutions.sed      # fill in your own serials
+```
+
+Sensor serials keep their first byte, because that byte encodes the hardware type
+(`01` electricity, `02` gas, `08` temperature). See `local/README.md`, including how to
+recover the real values from a running installation if that file is ever lost.
+
 ## Deploy
 
 ```bash
-KEY=~/.ssh/private-key_HomeAssistant_ed25519
+./deploy.sh --render      # render to build/, copy nothing - inspect it first
+./deploy.sh               # render, back up on the Pi, copy, run `ha core check`
+```
 
-# the add-on
+`deploy.sh` refuses to copy anything if a placeholder survives rendering, so a missing
+mapping fails loudly instead of silently deploying a broken config.
+
+Override the target with `HA_HOST`, `HA_USER`, `HA_KEY`.
+
+The add-on is deployed separately, since it changes rarely:
+
+```bash
+KEY=~/.ssh/private-key_HomeAssistant_ed25519
 scp -i $KEY -r addon/energo-boot root@192.168.0.25:/addons/
 ssh -i $KEY root@192.168.0.25 'ha store reload'
 ssh -i $KEY root@192.168.0.25 'ha addons install local_energo_boot'
 ssh -i $KEY root@192.168.0.25 'ha addons start   local_energo_boot'
+```
 
-# the handshake automations (REPLACES automations.yaml - back it up first)
-ssh -i $KEY root@192.168.0.25 'cp -a /config/automations.yaml /config/automations.yaml.bak'
-scp -i $KEY ha-config/automations-energomonitor.yaml root@192.168.0.25:/config/automations.yaml
+`configuration.yaml` needs one line, once:
 
-# the entities
-scp -i $KEY ha-config/mqtt.yaml root@192.168.0.25:/config/mqtt.yaml
-# and one line in /config/configuration.yaml:
-#     mqtt: !include mqtt.yaml
+```yaml
+mqtt: !include mqtt.yaml
 ```
 
 Then in the HA UI: enable **Watchdog** on the add-on, and reload via
 Developer Tools → YAML → *Reload Automations* and *Manually configured MQTT entities*.
+
+## Adding a sensor
+
+A new sensor appears in the MQTT stream on its own, but does not become an entity by
+itself - the entity list is explicit. To add one:
+
+1. Find its serial: **MQTT → Configure → Listen to a topic** on `sn/<SN>/#`, and watch for
+   a `u` you do not recognise. Its `m` codes tell you what it measures.
+2. Copy an existing entity block in `ha-config/mqtt.yaml`, change the `u` filter to a
+   **new placeholder** keeping the hardware-type first byte, and change the `m` code.
+3. Add the mapping line to `local/substitutions.sed`.
+4. `./deploy.sh`, then reload MQTT entities.
+
+Do **not** key an entity on `ch` - see *Things that will bite*.
 
 Bring-up order matters - a handshake missed while something is not yet listening costs a
 whole device cycle: Mosquitto → MQTT integration → automations → responder → NAT rules →

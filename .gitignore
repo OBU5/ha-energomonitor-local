@@ -18,3 +18,7 @@ Thumbs.db
 # Python
 __pycache__/
 *.pyc
+
+# Real device identity and rendered output - see local/README.md
+local/
+build/

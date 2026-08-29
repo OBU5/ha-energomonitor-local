@@ -1,0 +1,13 @@
+# Copy to local/substitutions.sed and fill in your own device.
+# Placeholders on the left, your real values on the right.
+#
+# Sensor serials: keep the first byte, it encodes the hardware type
+# (01 electricity, 02 gas, 08 temperature).
+
+s/0123456789ABCDEF/YOUR16HEXSERIAL0/g
+s/EWGAABBCC/EWGXXXXXX/g
+s/01000001/YOURELEC/g
+s/02000002/YOURGAS0/g
+s/08000001/YOURTMP1/g
+s/08000002/YOURTMP2/g
+s/08000003/YOURTMP3/g
