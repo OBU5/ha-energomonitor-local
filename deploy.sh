@@ -67,14 +67,85 @@ fi
 SSH="ssh -i $HA_KEY -o BatchMode=yes $HA_USER@$HA_HOST"
 STAMP=$(date +%Y%m%d-%H%M%S)
 
+# ---------------------------------------------------------------------------
+# /config/automations.yaml is not ours alone: Home Assistant's own automation
+# editor writes every UI-created automation into that same file.  Copying over
+# it - which this script used to do - deletes them silently, and there is no
+# error to notice, only an automation that has quietly stopped existing.
+#
+# So the EnergoMonitor blocks are fenced between markers and only that fenced
+# region is replaced.  Blocks carrying one of our ids but no fence are dropped
+# too: that is what migrates an installation deployed by the older script,
+# which wrote the blocks bare.
+# ---------------------------------------------------------------------------
+BEGIN_MARK="# >>> energomonitor - managed by deploy.sh, do not edit by hand >>>"
+END_MARK="# <<< energomonitor - managed by deploy.sh <<<"
+
 echo
 echo "backing up on $HA_HOST"
 $SSH "cp -a /config/mqtt.yaml /config/mqtt.yaml.bak-$STAMP 2>/dev/null || true"
 $SSH "cp -a /config/automations.yaml /config/automations.yaml.bak-$STAMP 2>/dev/null || true"
 
+echo "merging automations"
+$SSH "cat /config/automations.yaml 2>/dev/null || true" > build/automations.remote.yaml
+
+# Our own ids, read from the rendered file so adding a fourth automation needs
+# no change here.
+OUR_IDS=$(sed -nE "s/^- id: *//p" build/automations-energomonitor.yaml \
+          | tr -d "\"'" | paste -sd, -)
+
+# An empty automations.yaml is the literal "[]"; carrying that through would
+# produce a list marker followed by a list.
+grep -vE '^\[\]$' build/automations.remote.yaml > build/automations.stripped.yaml || true
+
+awk -v DROP="$OUR_IDS" -v BM="$BEGIN_MARK" -v EM="$END_MARK" '
+function flush(   i) {
+    if (nb == 0) return
+    if (id != "" && (id in drop)) { dropped++ }
+    else {
+        for (i = 1; i <= nb; i++) print buf[i]
+        if (id != "") kept++
+    }
+    nb = 0; id = ""
+}
+BEGIN {
+    n = split(DROP, list, ",")
+    for (i = 1; i <= n; i++) drop[list[i]] = 1
+    nb = 0; id = ""; kept = 0; dropped = 0; fenced = 0
+}
+$0 == BM { flush(); fenced = 1; next }
+$0 == EM { fenced = 0; next }
+fenced   { next }
+/^- /    { flush() }
+{
+    buf[++nb] = $0
+    if (id == "") {
+        line = $0
+        # \047 is a single quote - written octal to keep this awk program
+        # embeddable in a single-quoted shell string.
+        if (nb == 1 && sub(/^- +id: */, "", line)) {
+            gsub(/^["\047]|["\047]$/, "", line); id = line
+        } else if (sub(/^  id: */, "", line)) {
+            gsub(/^["\047]|["\047]$/, "", line); id = line
+        }
+    }
+}
+END {
+    flush()
+    printf "  %d automation(s) preserved, %d EnergoMonitor block(s) replaced\n",
+           kept, dropped > "/dev/stderr"
+}
+' build/automations.stripped.yaml > build/automations.merged.yaml
+
+{
+    echo "$BEGIN_MARK"
+    cat build/automations-energomonitor.yaml
+    echo "$END_MARK"
+} >> build/automations.merged.yaml
+
 echo "copying"
 scp -i "$HA_KEY" -q build/mqtt.yaml "$HA_USER@$HA_HOST:/config/mqtt.yaml"
-scp -i "$HA_KEY" -q build/automations-energomonitor.yaml "$HA_USER@$HA_HOST:/config/automations.yaml"
+scp -i "$HA_KEY" -q build/automations.merged.yaml "$HA_USER@$HA_HOST:/config/automations.yaml"
 
 echo "validating"
 $SSH "ha core check"

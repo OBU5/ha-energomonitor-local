@@ -7,7 +7,8 @@ port-forward. Working since 2026-08-28.
 The protocol was reverse-engineered from a `tcpdump` capture of the real cloud exchange.
 
 **[`HOWTO.md`](HOWTO.md) is the main document** - what it took, step by step, every trap,
-and the wire-level protocol detail.
+and the wire-level protocol detail. **[`NAVOD.md`](NAVOD.md)** is a Czech step-by-step guide
+for reproducing the whole thing on another site.
 
 > Serials in this repo are placeholders. The Homebase serial appears as
 > `0123456789ABCDEF` and the sensor serials as `01000001` / `02000002` / `08000001`-`3`.
@@ -56,7 +57,7 @@ Three pieces, all necessary:
 | `addon/energo-boot/config.yaml` | 31 | Supervisor add-on manifest |
 | `addon/energo-boot/Dockerfile` | 11 | container build |
 | `addon/energo-boot/build.yaml` | 2 | base image pin |
-| `ha-config/automations-energomonitor.yaml` | 65 | `/config/automations.yaml` |
+| `ha-config/automations-energomonitor.yaml` | 65 | a fenced region in `/config/automations.yaml` |
 | `ha-config/mqtt.yaml` | 495 | `/config/mqtt.yaml` |
 
 Everything except `server.py` is declarative - Supervisor metadata or data that Home
@@ -226,6 +227,12 @@ recover the real values from a running installation if that file is ever lost.
 
 `deploy.sh` refuses to copy anything if a placeholder survives rendering, so a missing
 mapping fails loudly instead of silently deploying a broken config.
+
+It **merges** the automations rather than replacing `/config/automations.yaml`: the blocks
+are fenced between `# >>> energomonitor ...` markers and only that region is rewritten, so
+automations created in the Home Assistant UI - which live in the same file - survive a
+deploy. Blocks carrying one of our ids but no fence are removed too, which migrates an
+installation deployed by an older version of the script.
 
 Override the target with `HA_HOST`, `HA_USER`, `HA_KEY`.
 
